@@ -836,10 +836,6 @@ let process_rewrite1_r ttenv ?target ri tc =
       assert (List.is_empty lem.ax_tparams);
       let equiv = EcFol.destr_equivF lem.ax_spec in
 
-      (* FIXME: add sanity checks!
-         - argsl and argsr need to have the same type
-         - resl and resr need to have the same type *)
-
       (* FIXME: This seems to leave some types open **)
       let sided_env m (p : EcModules.function_) args res =
         let subenv = EcEnv.Memory.push_active m env in
@@ -913,7 +909,7 @@ let process_rewrite1_r ttenv ?target ri tc =
           fp_head = FPNamed (name, None);
           fp_args = []; } in
       let tc =
-        t_onselect p (t_seq (EcPhlCall.process_call None pterm) (t_try process_done)) tc in
+        t_onselect p (EcPhlCall.process_call None pterm) tc in
 
       (* Two more goals (1 and 4) can be solved in general (with the same proof):
        * - move=> &1 &2 H; exists var1{1} var2{1} ... varn{1}; split.
@@ -927,7 +923,7 @@ let process_rewrite1_r ttenv ?target ri tc =
       let tc =
         t_onselect
           p
-          (t_seq (EcPhlInline.process_inline (`All (None, None))) EcPhlAuto.t_auto)
+          (t_seq (EcPhlInline.process_inline (`All (None, None))) (t_try (t_seq EcPhlAuto.t_auto process_done)))
           tc in
 
       t_onall process_trivial tc
