@@ -825,16 +825,32 @@ let process_rewrite1_r ttenv ?target ri tc =
       process_algebra `Solve `Field [] tc
 
   | RWEquiv (side, _pos, name, (argsl, resl), (argsr, resr)) ->
+      (* Check which direction we wish to go in *)
       let tc = match side with
         | `Left  -> tc
         | `Right -> as_tcenv1 (EcPhlSym.t_equiv_sym tc)
       in
 
-      let env, _, goal = FApi.tc1_eflat tc in
+      (* Extract the context *)
+      let env, hyps, goal = FApi.tc1_eflat tc in
       let goal = EcFol.destr_equivS goal in
-      let _, lem = EcEnv.Ax.lookup (unloc name) env in
-      assert (List.is_empty lem.ax_tparams);
-      let equiv = EcFol.destr_equivF lem.ax_spec in
+    
+      (* Get the symbol of name and retrieve it's equiv *)
+      let sym_of_name = string_of_qsymbol (unloc name) in
+      let equiv = 
+        let f = 
+          if LDecl.hyp_exists sym_of_name hyps then
+            let _, f = LDecl.hyp_by_name sym_of_name hyps in 
+            f   
+          else
+            let _, lem = EcEnv.Ax.lookup (unloc name) env in
+            assert (List.is_empty lem.ax_tparams);
+            lem.ax_spec
+        in
+        (* FIXME: how do we handle errors? *)
+        try EcFol.destr_equivF f with
+          | DestrError _ -> raise (LowRewrite.RewriteError LRW_NothingToRewrite)
+      in
 
       (* FIXME: This seems to leave some types open **)
       let sided_env m (p : EcModules.function_) args res =
@@ -881,18 +897,20 @@ let process_rewrite1_r ttenv ?target ri tc =
             (EcFol.form_of_expr mr (e_tuple argsr))
         and po =
           f_eq (EcFol.form_of_expr ml resl)  (EcFol.form_of_expr mr resr)
-        in (pr, po) in
+        (* TODO: we can be slightly cleverer about which prs we add here *)
+        in (f_and pr goal.es_pr, po) in
 
+      (* Construct the proc calls that we want in each transitivity *)
       let progl = EcModules.s_call (Some lvl, equiv.ef_fl, argsl) in
       let progr = EcModules.s_call (Some lvr, equiv.ef_fr, argsr) in
-
+      
+      (* Here we build the chain of transitivity calls, and discharge intermediate goals *)
       let tc =
         EcPhlTrans.t_equivS_trans
            (EcMemory.memtype meml, progl)
            (prpo (EcMemory.memory meml) mright argsl resl argsl resl)
            (goal.es_pr, goal.es_po)
            tc in
-
       let p = process_tfocus tc (Some [Some 4,Some 4], None) in
       let tc =
         t_onselect
@@ -909,7 +927,11 @@ let process_rewrite1_r ttenv ?target ri tc =
           fp_head = FPNamed (name, None);
           fp_args = []; } in
       let tc =
-        t_onselect p (EcPhlCall.process_call None pterm) tc in
+        t_onselect
+          p 
+          (* TODO: We can maybe do more work here. *)
+          (t_seq (EcPhlCall.process_call None pterm) EcPhlAuto.t_auto)
+          tc in
 
       (* Two more goals (1 and 4) can be solved in general (with the same proof):
        * - move=> &1 &2 H; exists var1{1} var2{1} ... varn{1}; split.
@@ -919,7 +941,7 @@ let process_rewrite1_r ttenv ?target ri tc =
        * When rewriting right to left, we may need to use the right-memory values instead.
        *)
 
-      let p = process_tfocus tc (Some [Some 3, Some 3; Some 7, Some 7], None) in
+      let p = process_tfocus tc (Some [Some 3, Some 3; Some (-1), Some (-1)], None) in
       let tc =
         t_onselect
           p
